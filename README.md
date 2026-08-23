@@ -1,0 +1,138 @@
+# NL2SQL — Natural Language to SQL
+
+> **Transformer-Based Semantic Query Generation** | CSE472 Deep Learning CA
+
+Convert plain English questions into SQL queries using SentenceTransformer embeddings and cosine similarity for intelligent schema matching.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | FastAPI (Python) |
+| NLP | SentenceTransformer `all-MiniLM-L6-v2` |
+| Similarity | scikit-learn cosine similarity |
+| Database | SQLite + SQLAlchemy ORM |
+| Frontend | Pure HTML/CSS/JS (dark theme) |
+
+---
+
+## Setup Instructions
+
+### 1. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Seed the Database
+
+```bash
+python dataset/seed_data.py
+```
+
+This populates the SQLite database (`academic.db`) with 10 students, 50 mark records, and 5 courses.
+
+### 3. Run the Server
+
+```bash
+uvicorn backend.app:app --reload
+```
+
+Open [http://localhost:8000](http://localhost:8000) in your browser.
+
+---
+
+## Example Queries
+
+| Natural Language | Generated SQL |
+|------------------|---------------|
+| show top 5 students by cgpa | `SELECT * FROM students ORDER BY cgpa DESC LIMIT 5` |
+| students with attendance below 75 | `SELECT * FROM students WHERE attendance < 75` |
+| show CSE students | `SELECT * FROM students WHERE department = 'CSE'` |
+| count all students | `SELECT COUNT(*) as total FROM students` |
+| average cgpa of students | `SELECT AVG(cgpa) as average_cgpa FROM students` |
+| highest marks in class | `SELECT * FROM marks ORDER BY marks DESC LIMIT 5` |
+| courses with 4 credits | `SELECT * FROM courses WHERE credits > 3` |
+
+---
+
+## Architecture
+
+```
+User Query (Natural Language)
+        │
+        ▼
+┌─────────────────────────┐
+│   NLPreprocessor        │  tokenize, normalize, extract intent & numbers
+└──────────┬──────────────┘
+           │
+           ▼
+┌─────────────────────────┐
+│   EmbeddingMatcher      │  SentenceTransformer → cosine similarity
+│   (all-MiniLM-L6-v2)   │  matches query to table + columns
+└──────────┬──────────────┘
+           │  schema_match {table, confidence, columns}
+           ▼
+┌─────────────────────────┐
+│   SQLGenerator          │  intent × schema → SQL template
+└──────────┬──────────────┘
+           │  SQL string
+           ▼
+┌─────────────────────────┐
+│   SQLExecutor           │  validate (block DROP/DELETE/etc.) → execute
+└──────────┬──────────────┘
+           │  rows + columns
+           ▼
+        JSON Response → Frontend
+```
+
+### Key Design Decisions
+
+- **No LLM API calls** — fully offline using a local transformer model
+- **Semantic schema linking** — embeddings match query intent to the right table/column
+- **Template-based SQL** — avoids hallucination, ensures syntactically valid SQL
+- **Safe execution** — blocklist prevents destructive queries
+
+---
+
+## Project Structure
+
+```
+nlp-sql-ca/
+├── backend/
+│   ├── app.py                  # FastAPI entry point
+│   ├── nlp/
+│   │   ├── preprocessor.py     # tokenize, normalize, intent detection
+│   │   └── embeddings.py       # SentenceTransformer + cosine similarity
+│   ├── sql_generator/
+│   │   └── generator.py        # intent → SQL template
+│   ├── database/
+│   │   ├── schema.py           # SQLAlchemy models
+│   │   └── executor.py         # safe SQL execution
+│   └── utils/
+│       └── schema_meta.py      # schema descriptions + synonyms
+├── frontend/
+│   └── index.html              # dark-themed query UI
+├── dataset/
+│   └── seed_data.py            # populate SQLite with sample data
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Database Schema
+
+**students** — `id, name, department, cgpa, attendance, semester`  
+**marks** — `id, student_id, subject, marks, semester`  
+**courses** — `course_id, course_name, faculty, credits`
+
+---
+
+## Academic Note
+
+This project was developed as a **Continuous Assessment (CA)** submission for **CSE472 — Deep Learning**. It demonstrates practical application of transformer-based language models for structured query generation without relying on external LLM APIs.
+
+The `all-MiniLM-L6-v2` model (22M parameters) is used purely for generating semantic embeddings, making the system lightweight, fast, and fully offline-capable.
