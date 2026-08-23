@@ -1,7 +1,5 @@
 fastapi
 uvicorn
-sentence-transformers
-torch
 scikit-learn
 pandas
 numpy

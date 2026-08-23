@@ -9,7 +9,6 @@ Intent Detection:
 """
 import re
 import os
-import torch
 
 STOPWORDS = {"the", "a", "an", "is", "are", "was", "were", "of", "in", "on", "at", "to", "for", "with", "by", "from", "and", "or", "but", "not", "all", "me", "my", "i", "we", "you", "it", "this", "that", "those", "these", "who", "which", "where", "what", "how", "get", "give", "show", "list", "find", "display", "fetch"}
 
@@ -20,10 +19,13 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "models", "inte
 
 def _load_neural_model():
     """Load fine-tuned IntentClassifier if weights exist."""
+    if os.getenv("ENABLE_NEURAL_MODEL", "false").lower() != "true":
+        return None, None
     abs_path = os.path.abspath(MODEL_PATH)
     if not os.path.exists(abs_path):
         return None, None
     try:
+        import torch
         from backend.nlp.intent_model import IntentClassifier
         checkpoint = torch.load(abs_path, map_location="cpu", weights_only=False)
         model = IntentClassifier(
@@ -42,7 +44,11 @@ def _load_neural_model():
 
 # Load once at module import
 _NEURAL_MODEL, _ID2LABEL = _load_neural_model()
-_DEVICE = torch.device("cpu")
+_DEVICE = None
+
+if _NEURAL_MODEL is not None:
+    import torch
+    _DEVICE = torch.device("cpu")
 
 
 class NLPreprocessor:

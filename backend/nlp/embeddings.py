@@ -1,31 +1,37 @@
-"""
-Embedding Generation Module
-Uses SentenceTransformer (all-MiniLM-L6-v2) to generate semantic vector representations
-for user queries and schema metadata, then computes cosine similarity for schema linking.
-"""
-import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from sentence_transformers import SentenceTransformer
-from backend.utils.schema_meta import SCHEMA_META, SYNONYMS
+"""Lightweight schema matching for the production deployment.
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+TF-IDF keeps the Render free instance well below its memory limit. The
+transformer implementation can still be used locally by replacing this
+matcher when more memory is available.
+"""
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from backend.utils.schema_meta import SCHEMA_META, SYNONYMS
 
 class EmbeddingMatcher:
     def __init__(self):
-        print(f"Loading transformer model: {MODEL_NAME}")
-        self.model = SentenceTransformer(MODEL_NAME)
-        self._build_schema_embeddings()
+        self.vectorizer = TfidfVectorizer(ngram_range=(1, 2), lowercase=True)
+        self._build_schema_vectors()
 
-    def _build_schema_embeddings(self):
-        """Pre-compute embeddings for all schema components."""
-        self.table_embeddings = {}
-        self.column_embeddings = {}
+    def _build_schema_vectors(self):
+        """Pre-compute sparse vectors for all schema components."""
+        self.table_vectors = {}
+        self.column_vectors = {}
+        descriptions = []
 
         for table, meta in SCHEMA_META.items():
-            self.table_embeddings[table] = self.model.encode([meta["description"]])[0]
-            self.column_embeddings[table] = {}
+            descriptions.append(meta["description"])
             for col, desc in meta["columns"].items():
-                self.column_embeddings[table][col] = self.model.encode([desc])[0]
+                descriptions.append(desc)
+
+        self.vectorizer.fit(descriptions)
+        for table, meta in SCHEMA_META.items():
+            table_text = " ".join([meta["description"], *meta["columns"].values()])
+            self.table_vectors[table] = self.vectorizer.transform([table_text])
+            self.column_vectors[table] = {
+                col: self.vectorizer.transform([desc])
+                for col, desc in meta["columns"].items()
+            }
 
     def apply_synonyms(self, text: str) -> str:
         for word, replacement in SYNONYMS.items():
@@ -35,11 +41,16 @@ class EmbeddingMatcher:
     def match_table(self, query: str) -> tuple:
         """Returns (best_table, confidence_score)"""
         query = self.apply_synonyms(query)
-        query_emb = self.model.encode([query])[0]
+        query_vector = self.vectorizer.transform([query])
 
         scores = {}
-        for table, emb in self.table_embeddings.items():
-            sim = cosine_similarity([query_emb], [emb])[0][0]
+        for table, vector in self.table_vectors.items():
+            sim = cosine_similarity(query_vector, vector)[0][0]
+            query_words = set(query.lower().split())
+            if table in query_words:
+                sim += 0.75
+            if query_words.intersection(SCHEMA_META[table]["columns"]):
+                sim += 0.5
             scores[table] = float(sim)
 
         best_table = max(scores, key=scores.get)
@@ -48,14 +59,14 @@ class EmbeddingMatcher:
     def match_columns(self, query: str, table: str) -> list:
         """Returns list of (column, confidence) sorted by relevance."""
         query = self.apply_synonyms(query)
-        query_emb = self.model.encode([query])[0]
+        query_vector = self.vectorizer.transform([query])
 
-        if table not in self.column_embeddings:
+        if table not in self.column_vectors:
             return []
 
         results = []
-        for col, emb in self.column_embeddings[table].items():
-            sim = cosine_similarity([query_emb], [emb])[0][0]
+        for col, vector in self.column_vectors[table].items():
+            sim = cosine_similarity(query_vector, vector)[0][0]
             results.append((col, float(sim)))
 
         results.sort(key=lambda x: x[1], reverse=True)
